@@ -27,6 +27,80 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(collection);
 
+    vscode.workspace.onDidChangeTextDocument(async (event) => {
+
+    const document = event.document;
+
+    if (document.languageId !== 'php') {
+        return;
+    }
+
+    const changes = event.contentChanges;
+
+    if (!changes.length) {
+        return;
+    }
+
+    const lastChange = changes[0];
+
+    // user pressed enter
+    if (!lastChange.text.includes('\n')) {
+        return;
+    }
+
+    const lineIndex = lastChange.range.start.line;
+
+    const previousLine = document.lineAt(lineIndex).text;
+
+    const trimmed = previousLine.trim();
+
+    // skip empty
+    if (!trimmed) {
+        return;
+    }
+
+    // skip already valid endings
+    if (
+        trimmed.endsWith(';') ||
+        trimmed.endsWith('{') ||
+        trimmed.endsWith('}') ||
+        trimmed.endsWith(':')
+    ) {
+        return;
+    }
+
+    // skip comments
+    if (trimmed.startsWith('//')) {
+        return;
+    }
+
+    // detect probable statements
+    const looksLikeStatement =
+        trimmed.includes('=') ||
+        /\w+\(.*\)/.test(trimmed);
+
+    if (!looksLikeStatement) {
+        return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+
+    if (!editor) {
+        return;
+    }
+
+    const position = new vscode.Position(
+        lineIndex,
+        previousLine.length
+    );
+
+    const edit = new vscode.WorkspaceEdit();
+
+    edit.insert(document.uri, position, ';');
+
+    await vscode.workspace.applyEdit(edit);
+});
+
     function analyzeDocument(document: vscode.TextDocument) {
 
         if (document.languageId !== 'php') return;
