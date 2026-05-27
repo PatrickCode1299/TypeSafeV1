@@ -26,7 +26,90 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     context.subscriptions.push(collection);
+    const pendingUnusedDeletes = new Map<string, number>();
+    vscode.workspace.onWillSaveTextDocument(async (event) => {
 
+    const document = event.document;
+
+    if (document.languageId !== 'php') {
+        return;
+    }
+
+    const diagnostics =
+        collection.get(document.uri) || [];
+
+    const unusedVariables = diagnostics.filter(
+        d =>
+            d.message.startsWith('Unused variable')
+    );
+
+    if (unusedVariables.length === 0) {
+
+        // cleanup old entries
+        pendingUnusedDeletes.clear();
+
+        return;
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+
+    unusedVariables.forEach(diagnostic => {
+
+        const lineNumber =
+            diagnostic.range.start.line;
+
+        const key =
+            `${document.uri.fsPath}:${lineNumber}`;
+
+        const currentCount =
+            pendingUnusedDeletes.get(key) || 0;
+
+        // =====================================
+        // FIRST SAVE
+        // =====================================
+
+        if (currentCount === 0) {
+
+            pendingUnusedDeletes.set(key, 1);
+
+            vscode.window.setStatusBarMessage(
+                `⚠️ Unused variable detected. Save again to remove.`,
+                3000
+            );
+
+            return;
+        }
+
+        // =====================================
+        // SECOND SAVE
+        // =====================================
+
+        const line =
+            document.lineAt(lineNumber);
+
+        const lineText = line.text;
+
+        // only remove safe assignments
+        if (
+            /^\s*\$[a-zA-Z_][a-zA-Z0-9_]*\s*=/.test(lineText)
+        ) {
+
+            edit.delete(
+                document.uri,
+                line.rangeIncludingLineBreak
+            );
+
+            pendingUnusedDeletes.delete(key);
+
+            vscode.window.setStatusBarMessage(
+                `🧹 Removed unused variable`,
+                3000
+            );
+        }
+    });
+
+    await vscode.workspace.applyEdit(edit);
+});
     vscode.workspace.onDidChangeTextDocument(async (event) => {
 
     const document = event.document;
