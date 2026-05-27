@@ -21,14 +21,12 @@ $lines = explode("\n", $code);
 $diagnostics = [];
 
 // ======================================================
-// SEMICOLON CHECK
+// LINE-BASED RULES (SAFE ONLY)
 // ======================================================
-
-$semicolonDiagnostics = checkMissingSemicolon($lines);
 
 $diagnostics = array_merge(
     $diagnostics,
-    $semicolonDiagnostics
+    checkMissingSemicolon($lines)
 );
 
 // ======================================================
@@ -36,9 +34,7 @@ $diagnostics = array_merge(
 // ======================================================
 
 try {
-
     $ast = $parser->parse($code);
-
 } catch (Throwable $e) {
 
     echo json_encode([
@@ -46,34 +42,35 @@ try {
         'start' => 0,
         'end' => 1,
         'message' => $e->getMessage(),
-        'severity' => 'error'
+        'severity' => 'error',
+        'code' => 'syntax-error'
     ]) . PHP_EOL;
 
     exit;
 }
 
 // ======================================================
-// VARIABLE VISITOR
+// VARIABLE + FLOW VISITOR
 // ======================================================
 
-class VariableVisitor extends NodeVisitorAbstract
+class AnalyzerVisitor extends NodeVisitorAbstract
 {
     public array $declared = [];
-
     public array $used = [];
+
+    public array $emptyBlocks = [];
+    public array $functions = [];
 
     public function enterNode(Node $node)
     {
-        // ==========================================
+        // ============================
         // VARIABLE DECLARATION
-        // ==========================================
-
+        // ============================
         if (
             $node instanceof Node\Expr\Assign &&
             $node->var instanceof Node\Expr\Variable &&
             is_string($node->var->name)
         ) {
-
             $this->declared[$node->var->name] = [
                 'line' => $node->getStartLine(),
                 'start' => $node->var->getStartFilePos(),
@@ -81,34 +78,76 @@ class VariableVisitor extends NodeVisitorAbstract
             ];
         }
 
-        // ==========================================
+        // ============================
         // VARIABLE USAGE
-        // ==========================================
-
+        // ============================
         if (
             $node instanceof Node\Expr\Variable &&
             is_string($node->name)
         ) {
-
             $this->used[] = $node->name;
+        }
+
+        // ============================
+        // EMPTY IF
+        // ============================
+        if ($node instanceof Node\Stmt\If_) {
+            if (empty($node->stmts)) {
+                $this->emptyBlocks[] = [
+                    'line' => $node->getStartLine(),
+                    'message' => 'Empty if statement block',
+                    'code' => 'empty-if'
+                ];
+            }
+        }
+
+        // ============================
+        // EMPTY FOREACH
+        // ============================
+        if ($node instanceof Node\Stmt\Foreach_) {
+            if (empty($node->stmts)) {
+                $this->emptyBlocks[] = [
+                    'line' => $node->getStartLine(),
+                    'message' => 'Empty foreach loop block',
+                    'code' => 'empty-foreach'
+                ];
+            }
+        }
+
+        // ============================
+        // EMPTY WHILE
+        // ============================
+        if ($node instanceof Node\Stmt\While_) {
+            if (empty($node->stmts)) {
+                $this->emptyBlocks[] = [
+                    'line' => $node->getStartLine(),
+                    'message' => 'Empty while loop block',
+                    'code' => 'empty-while'
+                ];
+            }
+        }
+
+        // ============================
+        // FUNCTION TRACKING
+        // ============================
+        if ($node instanceof Node\Stmt\Function_) {
+            $this->functions[] = (string) $node->name;
         }
     }
 }
 
 // ======================================================
-// TRAVERSE AST
+// RUN TRAVERSER
 // ======================================================
 
-$visitor = new VariableVisitor();
+$visitor = new AnalyzerVisitor();
 
 $traverser = new NodeTraverser();
-
 $traverser->addVisitor($visitor);
-
 $traverser->traverse($ast);
 
 // ======================================================
-// UNUSED VARIABLE CHECK
+// UNUSED VARIABLE (WARNING)
 // ======================================================
 
 foreach ($visitor->declared as $name => $meta) {
@@ -123,13 +162,51 @@ foreach ($visitor->declared as $name => $meta) {
             'end' => $meta['end'],
             'message' => "Unused variable \$$name",
             'severity' => 'warning',
+            'code' => 'unused-variable',
             'unnecessary' => true
         ];
     }
 }
 
 // ======================================================
-// OUTPUT ALL DIAGNOSTICS
+// UNDEFINED VARIABLE (CRITICAL)
+// ======================================================
+
+$usedVars = array_unique($visitor->used);
+
+foreach ($usedVars as $used) {
+
+    if (!isset($visitor->declared[$used])) {
+
+        $diagnostics[] = [
+            'line' => 1,
+            'start' => 0,
+            'end' => 20,
+            'message' => "Undefined variable \$$used",
+            'severity' => 'error',
+            'code' => 'undefined-variable'
+        ];
+    }
+}
+
+// ======================================================
+// EMPTY BLOCKS (CRITICAL)
+// ======================================================
+
+foreach ($visitor->emptyBlocks as $block) {
+
+    $diagnostics[] = [
+        'line' => $block['line'],
+        'start' => 0,
+        'end' => 10,
+        'message' => $block['message'],
+        'severity' => 'error',
+        'code' => $block['code']
+    ];
+}
+
+// ======================================================
+// OUTPUT
 // ======================================================
 
 foreach ($diagnostics as $diagnostic) {
@@ -137,29 +214,29 @@ foreach ($diagnostics as $diagnostic) {
 }
 
 // ======================================================
-// FUNCTIONS
+// SEMICOLON CHECK (SAFE VERSION)
 // ======================================================
 
 function checkMissingSemicolon(array $lines): array
 {
     $diagnostics = [];
 
+    $paren = 0;
+    $bracket = 0;
+    $brace = 0;
+
     foreach ($lines as $index => $line) {
 
         $trimmed = trim($line);
 
-        // ==========================================
-        // SKIP EMPTY
-        // ==========================================
+        if ($trimmed === '') continue;
 
-        if ($trimmed === '') {
-            continue;
-        }
+        // track structure state
+        $paren += substr_count($line, '(') - substr_count($line, ')');
+        $bracket += substr_count($line, '[') - substr_count($line, ']');
+        $brace += substr_count($line, '{') - substr_count($line, '}');
 
-        // ==========================================
-        // SKIP COMMENTS
-        // ==========================================
-
+        // skip comments
         if (
             str_starts_with($trimmed, '//') ||
             str_starts_with($trimmed, '#') ||
@@ -169,25 +246,12 @@ function checkMissingSemicolon(array $lines): array
             continue;
         }
 
-        // ==========================================
-        // SKIP BLOCK STRUCTURES
-        // ==========================================
-
-        if (
-            str_ends_with($trimmed, '[') ||
-            str_ends_with($trimmed, '(') ||
-            str_ends_with($trimmed, '{') ||
-            $trimmed === ']' ||
-            $trimmed === ')' ||
-            $trimmed === '}'
-        ) {
+        // skip inside structures (IMPORTANT FIX)
+        if ($paren > 0 || $bracket > 0 || $brace > 0) {
             continue;
         }
 
-        // ==========================================
-        // VALID ENDINGS
-        // ==========================================
-
+        // valid endings
         if (
             str_ends_with($trimmed, ';') ||
             str_ends_with($trimmed, ',') ||
@@ -196,46 +260,16 @@ function checkMissingSemicolon(array $lines): array
             continue;
         }
 
-        // ==========================================
-        // DETECT METHOD CALLS
-        // $this->run()
-        // foo()
-        // ==========================================
+        // method call / assignment / return
+        $isMethodCall = preg_match('/\)\s*$/', $trimmed);
+        $isAssignment = preg_match('/^\$[a-zA-Z_][a-zA-Z0-9_]*\s*=.+$/', $trimmed);
+        $isReturn = preg_match('/^return\s+.+$/', $trimmed);
 
-        $isMethodCall =
-            preg_match('/\)\s*$/', $trimmed);
-
-        // ==========================================
-        // DETECT SIMPLE ASSIGNMENTS
-        // $name = "Patrick"
-        // ==========================================
-
-        $isSimpleAssignment =
-            preg_match(
-                '/^\$[a-zA-Z_][a-zA-Z0-9_]*\s*=.+$/',
-                $trimmed
-            );
-
-        // ==========================================
-        // DETECT RETURN STATEMENTS
-        // ==========================================
-
-        $isReturn =
-            preg_match('/^return\s+.+$/', $trimmed);
-
-        // ==========================================
-        // ONLY FLAG SAFE CASES
-        // ==========================================
-
-        if (
-            $isMethodCall ||
-            $isSimpleAssignment ||
-            $isReturn
-        ) {
+        if ($isMethodCall || $isAssignment || $isReturn) {
 
             $diagnostics[] = [
                 'line' => $index + 1,
-                'start' => max(strlen($trimmed) - 1, 0),
+                'start' => 0,
                 'end' => strlen($trimmed),
                 'message' => 'Missing semicolon',
                 'severity' => 'warning',
