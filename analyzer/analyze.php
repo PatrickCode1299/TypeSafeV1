@@ -7,6 +7,8 @@ use PhpParser\ParserFactory;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 
+
+
 // ======================================================
 // READ INPUT
 // ======================================================
@@ -28,6 +30,10 @@ $diagnostics = array_merge(
     $diagnostics,
     checkMissingSemicolon($lines)
 );
+
+
+
+ 
 
 // ======================================================
 // PARSE PHP
@@ -134,6 +140,7 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             $this->functions[] = (string) $node->name;
         }
     }
+   
 }
 
 // ======================================================
@@ -180,7 +187,7 @@ foreach ($usedVars as $used) {
 
         $diagnostics[] = [
             'line' => 1,
-            'start' => 0,
+            'start' => 0,5,
             'end' => 20,
             'message' => "Undefined variable \$$used",
             'severity' => 'error',
@@ -280,3 +287,4 @@ function checkMissingSemicolon(array $lines): array
 
     return $diagnostics;
 }
+
