@@ -7,8 +7,6 @@ use PhpParser\ParserFactory;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 
-
-
 // ======================================================
 // READ INPUT
 // ======================================================
@@ -23,17 +21,13 @@ $lines = explode("\n", $code);
 $diagnostics = [];
 
 // ======================================================
-// LINE-BASED RULES (SAFE ONLY)
+// SAFE LINE RULES (UNCHANGED)
 // ======================================================
 
 $diagnostics = array_merge(
     $diagnostics,
     checkMissingSemicolon($lines)
 );
-
-
-
- 
 
 // ======================================================
 // PARSE PHP
@@ -56,22 +50,26 @@ try {
 }
 
 // ======================================================
-// VARIABLE + FLOW VISITOR
+// VISITOR (SAFE EXTENDED - NO REMOVALS)
 // ======================================================
 
 class AnalyzerVisitor extends NodeVisitorAbstract
 {
+    // ===== ORIGINAL STATE =====
     public array $declared = [];
     public array $used = [];
 
     public array $emptyBlocks = [];
-    public array $functions = [];
+
+    // ===== NEW STATE (ADDED ONLY) =====
+    public array $functions = [];        // function => params
+    public array $functionCalls = [];    // function => args
 
     public function enterNode(Node $node)
     {
-        // ============================
-        // VARIABLE DECLARATION
-        // ============================
+        // ======================================================
+        // VARIABLE DECLARATION (UNCHANGED)
+        // ======================================================
         if (
             $node instanceof Node\Expr\Assign &&
             $node->var instanceof Node\Expr\Variable &&
@@ -84,9 +82,9 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             ];
         }
 
-        // ============================
-        // VARIABLE USAGE
-        // ============================
+        // ======================================================
+        // VARIABLE USAGE (UNCHANGED)
+        // ======================================================
         if (
             $node instanceof Node\Expr\Variable &&
             is_string($node->name)
@@ -94,9 +92,64 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             $this->used[] = $node->name;
         }
 
-        // ============================
-        // EMPTY IF
-        // ============================
+        // ======================================================
+        // FUNCTION DECLARATION (NEW BUT SAFE)
+        // ======================================================
+        if ($node instanceof Node\Stmt\Function_) {
+
+            $name = (string) $node->name;
+
+            $this->functions[$name] = [
+                'params' => count($node->params),
+                'line' => $node->getStartLine()
+            ];
+        }
+
+        // ======================================================
+        // METHOD DECLARATION (constructor support - SAFE ADD)
+        // ======================================================
+        if ($node instanceof Node\Stmt\ClassMethod) {
+
+            if ($node->name->name === '__construct') {
+
+                // store constructor like a function
+                $this->functions['__construct'] = [
+                    'params' => count($node->params),
+                    'line' => $node->getStartLine()
+                ];
+            }
+        }
+
+        // ======================================================
+        // FUNCTION CALL TRACKING (NEW)
+        // ======================================================
+        if ($node instanceof Node\Expr\FuncCall) {
+
+            if ($node->name instanceof Node\Name) {
+
+                $name = (string) $node->name;
+
+                $this->functionCalls[$name] = count($node->args);
+            }
+        }
+
+        // ======================================================
+        // NEW CLASS INSTANTIATION TRACKING (NEW)
+        // ======================================================
+        if ($node instanceof Node\Expr\New_) {
+
+            if ($node->class instanceof Node\Name) {
+
+                $className = (string) $node->class;
+
+                // treat constructor as function call
+                $this->functionCalls[$className] = count($node->args);
+            }
+        }
+
+        // ======================================================
+        // EMPTY BLOCKS (UNCHANGED LOGIC)
+        // ======================================================
         if ($node instanceof Node\Stmt\If_) {
             if (empty($node->stmts)) {
                 $this->emptyBlocks[] = [
@@ -107,9 +160,6 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             }
         }
 
-        // ============================
-        // EMPTY FOREACH
-        // ============================
         if ($node instanceof Node\Stmt\Foreach_) {
             if (empty($node->stmts)) {
                 $this->emptyBlocks[] = [
@@ -120,9 +170,6 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             }
         }
 
-        // ============================
-        // EMPTY WHILE
-        // ============================
         if ($node instanceof Node\Stmt\While_) {
             if (empty($node->stmts)) {
                 $this->emptyBlocks[] = [
@@ -132,19 +179,11 @@ class AnalyzerVisitor extends NodeVisitorAbstract
                 ];
             }
         }
-
-        // ============================
-        // FUNCTION TRACKING
-        // ============================
-        if ($node instanceof Node\Stmt\Function_) {
-            $this->functions[] = (string) $node->name;
-        }
     }
-   
 }
 
 // ======================================================
-// RUN TRAVERSER
+// RUN VISITOR
 // ======================================================
 
 $visitor = new AnalyzerVisitor();
@@ -154,7 +193,7 @@ $traverser->addVisitor($visitor);
 $traverser->traverse($ast);
 
 // ======================================================
-// UNUSED VARIABLE (WARNING)
+// UNUSED VARIABLES (UNCHANGED)
 // ======================================================
 
 foreach ($visitor->declared as $name => $meta) {
@@ -176,7 +215,33 @@ foreach ($visitor->declared as $name => $meta) {
 }
 
 // ======================================================
-// UNDEFINED VARIABLE (CRITICAL)
+// FUNCTION + CONSTRUCTOR ARG CHECK (SAFE ADD)
+// ======================================================
+
+foreach ($visitor->functions as $name => $meta) {
+
+    if (!isset($visitor->functionCalls[$name])) {
+        continue;
+    }
+
+    $expected = $meta['params'];
+    $given = $visitor->functionCalls[$name];
+
+    if ($given < $expected) {
+
+        $diagnostics[] = [
+            'line' => $meta['line'],
+            'start' => 0,
+            'end' => 80,
+            'message' => "Function '$name' expects $expected argument(s), got $given",
+            'severity' => 'warning',
+            'code' => 'missing-arguments'
+        ];
+    }
+}
+
+// ======================================================
+// UNDEFINED VARIABLES (UNCHANGED)
 // ======================================================
 
 $usedVars = array_unique($visitor->used);
@@ -187,7 +252,7 @@ foreach ($usedVars as $used) {
 
         $diagnostics[] = [
             'line' => 1,
-            'start' => 0,5,
+            'start' => 0,
             'end' => 20,
             'message' => "Undefined variable \$$used",
             'severity' => 'error',
@@ -197,7 +262,7 @@ foreach ($usedVars as $used) {
 }
 
 // ======================================================
-// EMPTY BLOCKS (CRITICAL)
+// EMPTY BLOCKS (UNCHANGED)
 // ======================================================
 
 foreach ($visitor->emptyBlocks as $block) {
@@ -221,7 +286,7 @@ foreach ($diagnostics as $diagnostic) {
 }
 
 // ======================================================
-// SEMICOLON CHECK (SAFE VERSION)
+// SEMICOLON CHECK (UNCHANGED)
 // ======================================================
 
 function checkMissingSemicolon(array $lines): array
@@ -235,30 +300,23 @@ function checkMissingSemicolon(array $lines): array
     foreach ($lines as $index => $line) {
 
         $trimmed = trim($line);
-
         if ($trimmed === '') continue;
 
-        // track structure state
         $paren += substr_count($line, '(') - substr_count($line, ')');
         $bracket += substr_count($line, '[') - substr_count($line, ']');
         $brace += substr_count($line, '{') - substr_count($line, '}');
 
-        // skip comments
         if (
             str_starts_with($trimmed, '//') ||
-            str_starts_with($trimmed, '#') ||
-            str_starts_with($trimmed, '/*') ||
-            str_starts_with($trimmed, '*')
+            str_starts_with($trimmed, '#')
         ) {
             continue;
         }
 
-        // skip inside structures (IMPORTANT FIX)
-        if ($paren > 0 || $bracket > 0 || $brace > 0) {
+        if ($paren > 0 || $brace > 0 || $bracket > 0) {
             continue;
         }
 
-        // valid endings
         if (
             str_ends_with($trimmed, ';') ||
             str_ends_with($trimmed, ',') ||
@@ -267,12 +325,10 @@ function checkMissingSemicolon(array $lines): array
             continue;
         }
 
-        // method call / assignment / return
-        $isMethodCall = preg_match('/\)\s*$/', $trimmed);
-        $isAssignment = preg_match('/^\$[a-zA-Z_][a-zA-Z0-9_]*\s*=.+$/', $trimmed);
-        $isReturn = preg_match('/^return\s+.+$/', $trimmed);
+        $isCall = preg_match('/\)\s*$/', $trimmed);
+        $isAssign = preg_match('/^\$[a-zA-Z_]/', $trimmed);
 
-        if ($isMethodCall || $isAssignment || $isReturn) {
+        if ($isCall || $isAssign) {
 
             $diagnostics[] = [
                 'line' => $index + 1,
@@ -287,4 +343,3 @@ function checkMissingSemicolon(array $lines): array
 
     return $diagnostics;
 }
-

@@ -3,24 +3,16 @@ import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 
-const collection =
-    vscode.languages.createDiagnosticCollection('typesafe-php');
+const collection = vscode.languages.createDiagnosticCollection('typesafe-php');
 
 let timeout: NodeJS.Timeout | undefined;
-
-// ======================================================
-// STATE LOCK (IMPORTANT FIX)
-// ======================================================
 let isApplyingEdit = false;
 
-// ======================================================
-// SNIPPET CACHE
-// ======================================================
 const snippetCache = new Map<string, vscode.CompletionItem[]>();
 
 export function activate(context: vscode.ExtensionContext) {
 
-    console.log("🔥 TYPESAFE PHP ACTIVE (FINAL STABLE)");
+    console.log("🔥 TYPESAFE PHP ACTIVE (FINAL MERGED EDITION)");
 
     const scriptPath = path.join(
         context.extensionPath,
@@ -36,7 +28,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(collection);
 
     // ======================================================
-    // SNIPPET GENERATOR (UNCHANGED)
+    // SNIPPET GENERATOR
     // ======================================================
     function generateSnippets(document: vscode.TextDocument): vscode.CompletionItem[] {
 
@@ -49,16 +41,17 @@ export function activate(context: vscode.ExtensionContext) {
 
             switch (line) {
 
+                // CLASS
                 case '//class': {
                     const item = new vscode.CompletionItem('class', vscode.CompletionItemKind.Snippet);
                     item.insertText = new vscode.SnippetString(
 `class \${1:ClassName}
 {
-    private int \${2:property};
+    private $\${2:property};
 
-    public function __construct(int \$\${2:property})
+    public function __construct($\${2:property})
     {
-        \$this->\${2:property} = \${2:property};
+        $this->\${2:property} = $\${2:property};
     }
 }`
                     );
@@ -66,35 +59,149 @@ export function activate(context: vscode.ExtensionContext) {
                     break;
                 }
 
-                case '//function': {
-                    const item = new vscode.CompletionItem('function', vscode.CompletionItemKind.Snippet);
+                // FN
+                case '//fn': {
+                    const item = new vscode.CompletionItem('fn', vscode.CompletionItemKind.Snippet);
                     item.insertText = new vscode.SnippetString(
-`function \${1:name}(int \$\${2:param}): int
+`function \${1:name}($\${2:param})
 {
-    return \$\${2:param};
+    return $\${2:param};
 }`
                     );
                     snippets.push(item);
                     break;
                 }
 
+                // IF
                 case '//if': {
                     const item = new vscode.CompletionItem('if', vscode.CompletionItemKind.Snippet);
                     item.insertText = new vscode.SnippetString(
-`if (\${1:condition}) {
-    echo \${1:condition};
+`if ($\${1:condition}) {
+    $0
 }`
                     );
                     snippets.push(item);
                     break;
                 }
 
+                // WHILE
+                case '//while': {
+                    const item = new vscode.CompletionItem('while', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`while ($\${1:condition}) {
+    $0
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // DO WHILE
+                case '//do while': {
+                    const item = new vscode.CompletionItem('do while', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`do {
+    $0
+} while ($\${1:condition});`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // ARRAY
+                case '//array': {
+                    const item = new vscode.CompletionItem('array', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`$\${1:items} = [];`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // FOREACH
+                case '//each': {
+                    const item = new vscode.CompletionItem('foreach', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`foreach ($\${1:items} as $\${2:item}) {
+    $0
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // SWITCH
+                case '//switch': {
+                    const item = new vscode.CompletionItem('switch', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`switch ($\${1:value}) {
+    case \${2:case}:
+        break;
+    default:
+        break;
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // MATCH
+                case '//match': {
+                    const item = new vscode.CompletionItem('match', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`$\${1:result} = match ($\${2:value}) {
+    \${3:condition} => \${4:result},
+    default => \${5:default},
+};`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // TRY
+                case '//try': {
+                    const item = new vscode.CompletionItem('try', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`try {
+    $0
+} catch (\\Exception $\${1:e}) {
+    echo $\${1:e}->getMessage();
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // CONST
+                case '//const': {
+                    const item = new vscode.CompletionItem('const', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`const \${1:NAME} = \${2:value};`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // STATIC FN
+                case '//static fn': {
+                    const item = new vscode.CompletionItem('static fn', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`public static function \${1:name}()
+{
+    $0
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // METHODS
                 case '//public method': {
                     const item = new vscode.CompletionItem('public method', vscode.CompletionItemKind.Snippet);
                     item.insertText = new vscode.SnippetString(
-`public function \${1:name}(int \$\${2:param}): int
+`public function \${1:name}($\${2:param})
 {
-    return \$\${2:param};
+    return $\${2:param};
 }`
                     );
                     snippets.push(item);
@@ -104,9 +211,36 @@ export function activate(context: vscode.ExtensionContext) {
                 case '//private method': {
                     const item = new vscode.CompletionItem('private method', vscode.CompletionItemKind.Snippet);
                     item.insertText = new vscode.SnippetString(
-`private function \${1:name}(int \$\${2:param}): int
+`private function \${1:name}($\${2:param})
 {
-    return \$\${2:param};
+    return $\${2:param};
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                // ENUM
+                case '//enum': {
+                    const item = new vscode.CompletionItem('enum', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`enum \${1:Status}
+{
+    case \${2:Active};
+    case \${3:Inactive};
+}`
+                    );
+                    snippets.push(item);
+                    break;
+                }
+
+                case '//enum backed': {
+                    const item = new vscode.CompletionItem('enum backed', vscode.CompletionItemKind.Snippet);
+                    item.insertText = new vscode.SnippetString(
+`enum \${1:Status}: \${2:string}
+{
+    case \${3:Active} = '\${4:active}';
+    case \${5:Inactive} = '\${6:inactive}';
 }`
                     );
                     snippets.push(item);
@@ -130,7 +264,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(completionProvider);
 
     // ======================================================
-    // 🧠 ALIAS ENGINE (STABLE + RELIABLE)
+    // ALIAS ENGINE (FULL RESTORED)
     // ======================================================
     async function writeAliasIntoFile(document: vscode.TextDocument, lineIndex: number) {
 
@@ -143,42 +277,115 @@ export function activate(context: vscode.ExtensionContext) {
 
         switch (lineText) {
 
-            case '//function':
-                snippet = `function \${1:name}(): void
-{
-    $0
-}`;
-                break;
-
             case '//class':
                 snippet = `class \${1:ClassName}
 {
-    private int \${2:property};
+    private $\${2:property};
 
-    public function __construct(int \$\${2:property})
+    public function __construct($\${2:property})
     {
-        \$this->\${2:property} = \${2:property};
+        $this->\${2:property} = $\${2:property};
     }
 }`;
                 break;
 
+            case '//fn':
+                snippet = `function \${1:name}($\${2:param})
+{
+    return $\${2:param};
+}`;
+                break;
+
             case '//if':
-                snippet = `if (\${1:condition}) {
+                snippet = `if ($\${1:condition}) {
+    $0
+}`;
+                break;
+
+            case '//while':
+                snippet = `while ($\${1:condition}) {
+    $0
+}`;
+                break;
+
+            case '//do while':
+                snippet = `do {
+    $0
+} while ($\${1:condition});`;
+                break;
+
+            case '//array':
+                snippet = `$\${1:items} = [];`;
+                break;
+
+            case '//each':
+                snippet = `foreach ($\${1:items} as $\${2:item}) {
+    $0
+}`;
+                break;
+
+            case '//switch':
+                snippet = `switch ($\${1:value}) {
+    case \${2:case}:
+        break;
+    default:
+        break;
+}`;
+                break;
+
+            case '//match':
+                snippet = `$\${1:result} = match ($\${2:value}) {
+    \${3:condition} => \${4:result},
+    default => \${5:default},
+};`;
+                break;
+
+            case '//try':
+                snippet = `try {
+    $0
+} catch (\\Exception $\${1:e}) {
+    echo $\${1:e}->getMessage();
+}`;
+                break;
+
+            case '//const':
+                snippet = `const \${1:NAME} = \${2:value};`;
+                break;
+
+            case '//static fn':
+                snippet = `public static function \${1:name}()
+{
     $0
 }`;
                 break;
 
             case '//public method':
-                snippet = `public function \${1:name}(): void
+                snippet = `public function \${1:name}($\${2:param})
 {
-    $0
+    return $\${2:param};
 }`;
                 break;
 
             case '//private method':
-                snippet = `private function \${1:name}(): void
+                snippet = `private function \${1:name}($\${2:param})
 {
-    $0
+    return $\${2:param};
+}`;
+                break;
+
+            case '//enum':
+                snippet = `enum \${1:Status}
+{
+    case \${2:Active};
+    case \${3:Inactive};
+}`;
+                break;
+
+            case '//enum backed':
+                snippet = `enum \${1:Status}: \${2:string}
+{
+    case \${3:Active} = '\${4:active}';
+    case \${5:Inactive} = '\${6:inactive}';
 }`;
                 break;
         }
@@ -187,9 +394,9 @@ export function activate(context: vscode.ExtensionContext) {
 
         isApplyingEdit = true;
 
-        const edit = new vscode.WorkspaceEdit();
         const range = document.lineAt(lineIndex).range;
 
+        const edit = new vscode.WorkspaceEdit();
         edit.delete(document.uri, range);
 
         await vscode.workspace.applyEdit(edit);
@@ -205,63 +412,27 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     // ======================================================
-    // UNUSED VARIABLE PURGE (UNCHANGED)
+    // SEMICOLON FIX (RESTORED)
     // ======================================================
-    const pendingUnusedDeletes = new Map<string, number>();
+    function shouldAddSemicolon(line: string): boolean {
+        const t = line.trim();
 
-    vscode.workspace.onWillSaveTextDocument(async (event) => {
+        if (!t) return false;
+        if (t.startsWith('//')) return false;
+        if (t.endsWith(';') || t.endsWith('{') || t.endsWith('}')) return false;
 
-        const document = event.document;
-
-        if (document.languageId !== 'php') return;
-
-        const diagnostics = collection.get(document.uri) || [];
-
-        const unusedVariables = diagnostics.filter(
-            d => d.message.startsWith('Unused variable')
+        return (
+            t.startsWith('echo ') ||
+            t.startsWith('return ') ||
+            t.startsWith('throw ') ||
+            t.startsWith('die(') ||
+            t.includes('=') ||
+            /\w+\(.*\)/.test(t)
         );
-
-        if (!unusedVariables.length) {
-            pendingUnusedDeletes.clear();
-            return;
-        }
-
-        const edit = new vscode.WorkspaceEdit();
-
-        for (const diagnostic of unusedVariables) {
-
-            const lineNumber = diagnostic.range.start.line;
-            const key = `${document.uri.fsPath}:${lineNumber}`;
-
-            const count = pendingUnusedDeletes.get(key) || 0;
-
-            if (count === 0) {
-                pendingUnusedDeletes.set(key, 1);
-                vscode.window.setStatusBarMessage(
-                    `⚠️ Unused variable detected. Save again to remove.`,
-                    3000
-                );
-                continue;
-            }
-
-            const line = document.lineAt(lineNumber);
-
-            if (/^\s*\$[a-zA-Z_][a-zA-Z0-9_]*\s*=/.test(line.text)) {
-                edit.delete(document.uri, line.rangeIncludingLineBreak);
-                pendingUnusedDeletes.delete(key);
-
-                vscode.window.setStatusBarMessage(
-                    `🧹 Removed unused variable`,
-                    3000
-                );
-            }
-        }
-
-        await vscode.workspace.applyEdit(edit);
-    });
+    }
 
     // ======================================================
-    // 🧠 SINGLE UNIFIED CHANGE PIPELINE (FIXED)
+    // PIPELINE (MERGED SAFE VERSION)
     // ======================================================
     vscode.workspace.onDidChangeTextDocument(event => {
 
@@ -271,74 +442,36 @@ export function activate(context: vscode.ExtensionContext) {
         if (document.languageId !== 'php') return;
 
         const change = event.contentChanges[0];
-        if (!change) return;
+        if (!change || !change.text.includes('\n')) return;
 
         const lineIndex = change.range.start.line;
-        const lineText = document.lineAt(lineIndex).text.trim();
-        const trimmed = lineText.trim();
+        const lineText = document.lineAt(lineIndex).text;
 
-const looksLikeStatement =
-    trimmed.startsWith('echo ') ||
-    trimmed.startsWith('return ') ||
-    trimmed.startsWith('die(') ||
-    trimmed.startsWith('throw ') ||
-    trimmed.includes('=') ||
-    /\w+\(.*\)/.test(trimmed);
-        // ============================
-        // ALIAS DETECTION (FIXED)
-        // ============================
-        if (change.text.includes('\n')) {
-            writeAliasIntoFile(document, lineIndex);
+        writeAliasIntoFile(document, lineIndex);
+
+        if (shouldAddSemicolon(lineText)) {
+            const edit = new vscode.WorkspaceEdit();
+            edit.insert(
+                document.uri,
+                new vscode.Position(lineIndex, lineText.length),
+                ';'
+            );
+            vscode.workspace.applyEdit(edit);
         }
 
-        // ============================
-        // SEMICOLON AUTO FIX
-        // ============================
-        if (change.text.includes('\n')) {
-
-            if (
-                lineText &&
-                !lineText.endsWith(';') &&
-                !lineText.endsWith('{') &&
-                !lineText.endsWith('}') &&
-                !lineText.startsWith('//') &&
-                looksLikeStatement 
-            ) {
-                const editor = vscode.window.activeTextEditor;
-                if (!editor) return;
-
-                const edit = new vscode.WorkspaceEdit();
-                edit.insert(document.uri, new vscode.Position(lineIndex, document.lineAt(lineIndex).text.length), ';');
-
-                vscode.workspace.applyEdit(edit);
-            }
-        }
-
-        // ============================
-        // SNIPPET CACHE UPDATE
-        // ============================
         snippetCache.set(document.uri.fsPath, generateSnippets(document));
 
-        // ============================
-        // ANALYSIS DEBOUNCE (STABLE)
-        // ============================
         if (timeout) clearTimeout(timeout);
 
-        timeout = setTimeout(() => {
-            analyzeDocument(document);
-        }, 450);
+        timeout = setTimeout(() => analyzeDocument(document), 450);
     });
 
     // ======================================================
-    // ANALYZER (UNCHANGED CORE LOGIC)
+    // ANALYZER (UNCHANGED)
     // ======================================================
     function analyzeDocument(document: vscode.TextDocument) {
 
         if (isApplyingEdit) return;
-        if (document.languageId !== 'php') return;
-
-        const text = document.getText();
-        if (!text.trim()) return;
 
         const child = spawn('php', [scriptPath], { shell: true });
 
@@ -356,10 +489,7 @@ const looksLikeStatement =
 
             const diagnostics: vscode.Diagnostic[] = [];
 
-            const lines = output.split('\n').filter(Boolean);
-
-            for (const line of lines) {
-
+            for (const line of output.split('\n')) {
                 try {
                     const result = JSON.parse(line);
 
@@ -370,52 +500,34 @@ const looksLikeStatement =
                         result.end ?? 100
                     );
 
-                    const severity =
-                        result.severity === 'error'
-                            ? vscode.DiagnosticSeverity.Error
-                            : vscode.DiagnosticSeverity.Warning;
-
-                    const diagnostic = new vscode.Diagnostic(
-                        range,
-                        result.message,
-                        severity
+                    diagnostics.push(
+                        new vscode.Diagnostic(
+                            range,
+                            result.message,
+                            result.severity === 'error'
+                                ? vscode.DiagnosticSeverity.Error
+                                : vscode.DiagnosticSeverity.Warning
+                        )
                     );
 
-                    diagnostic.source = "TypeSafe PHP";
-
-                    if (result.code === 'unused-variable') {
-                        diagnostic.tags = [vscode.DiagnosticTag.Unnecessary];
-                    }
-
-                    diagnostics.push(diagnostic);
-
-                } catch { }
+                } catch {}
             }
 
             collection.set(document.uri, diagnostics);
-
             snippetCache.set(document.uri.fsPath, generateSnippets(document));
-
-            if (errorOutput.trim()) {
-                console.log(errorOutput);
-            }
         });
 
-        child.stdin.write(text);
+        child.stdin.write(document.getText());
         child.stdin.end();
     }
 
     // ======================================================
-    // ACTIVE FILE REFRESH
+    // EVENTS
     // ======================================================
     vscode.window.onDidChangeActiveTextEditor(editor => {
-        if (!editor) return;
-        analyzeDocument(editor.document);
+        if (editor) analyzeDocument(editor.document);
     });
 
-    // ======================================================
-    // CLEANUP
-    // ======================================================
     vscode.workspace.onDidCloseTextDocument(doc => {
         collection.delete(doc.uri);
         snippetCache.delete(doc.uri.fsPath);
