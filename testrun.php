@@ -1,24 +1,8 @@
 <?php
-$name = "";
 
-if($name){
 
+function name($param)
+{
+    return $param;
 }
-echo $name;
- die();
-
- function name(): void;
- {
-     
- }
-
-
- private function name(): void;
- {
-     
- }
-
- public function name(): void;
- {
-     
- }
+echo name();
