@@ -21,7 +21,7 @@ $lines = explode("\n", $code);
 $diagnostics = [];
 
 // ======================================================
-// SAFE LINE RULES (UNCHANGED)
+// SAFE LINE RULES
 // ======================================================
 
 $diagnostics = array_merge(
@@ -50,26 +50,23 @@ try {
 }
 
 // ======================================================
-// VISITOR (SAFE EXTENDED - NO REMOVALS)
+// VISITOR
 // ======================================================
 
 class AnalyzerVisitor extends NodeVisitorAbstract
 {
-    // ===== ORIGINAL STATE =====
     public array $declared = [];
     public array $used = [];
-
     public array $emptyBlocks = [];
 
-    // ===== NEW STATE (ADDED ONLY) =====
-    public array $functions = [];        // function => params
-    public array $functionCalls = [];    // function => args
+    public array $functions = [];
+    public array $functionCalls = [];
 
     public function enterNode(Node $node)
     {
-        // ======================================================
-        // VARIABLE DECLARATION (UNCHANGED)
-        // ======================================================
+        // =========================
+        // VARIABLE ASSIGNMENT
+        // =========================
         if (
             $node instanceof Node\Expr\Assign &&
             $node->var instanceof Node\Expr\Variable &&
@@ -78,25 +75,61 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             $this->declared[$node->var->name] = [
                 'line' => $node->getStartLine(),
                 'start' => $node->var->getStartFilePos(),
-                'end' => $node->var->getEndFilePos()
+                'end' => $node->var->getEndFilePos(),
+                'type' => 'var'
             ];
         }
 
-        // ======================================================
-        // VARIABLE USAGE (UNCHANGED)
-        // ======================================================
-        if (
-            $node instanceof Node\Expr\Variable &&
-            is_string($node->name)
-        ) {
-            $this->used[] = $node->name;
+        // =========================
+        // FUNCTION PARAMS
+        // =========================
+        if ($node instanceof Node\Param && $node->var instanceof Node\Expr\Variable) {
+            $name = $node->var->name;
+
+            if (is_string($name)) {
+                $this->declared[$name] = [
+                    'line' => $node->getStartLine(),
+                    'type' => 'param'
+                ];
+            }
         }
 
-        // ======================================================
-        // FUNCTION DECLARATION (NEW BUT SAFE)
-        // ======================================================
-        if ($node instanceof Node\Stmt\Function_) {
+        // =========================
+        // IGNORE $this
+        // =========================
+        if ($node instanceof Node\Expr\Variable) {
+            if (is_string($node->name) && $node->name === 'this') {
+                return;
+            }
 
+            if (is_string($node->name)) {
+                $this->used[] = $node->name;
+            }
+        }
+
+        // =========================
+        // CLASS PROPERTIES
+        // =========================
+        if ($node instanceof Node\Stmt\PropertyProperty) {
+            $this->declared[$node->name->name] = [
+                'line' => $node->getStartLine(),
+                'type' => 'property'
+            ];
+        }
+
+        // =========================
+        // PROPERTY USAGE ($this->x)
+        // =========================
+        if ($node instanceof Node\Expr\PropertyFetch) {
+            if ($node->name instanceof Node\Identifier) {
+                $this->used[] = '__prop:' . $node->name->name;
+            }
+        }
+
+        // =========================
+        // FUNCTIONS
+        // =========================
+        if ($node instanceof Node\Stmt\Function_) {
             $name = (string) $node->name;
 
             $this->functions[$name] = [
@@ -105,14 +138,11 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             ];
         }
 
-        // ======================================================
-        // METHOD DECLARATION (constructor support - SAFE ADD)
-        // ======================================================
+        // =========================
+        // CONSTRUCTOR
+        // =========================
         if ($node instanceof Node\Stmt\ClassMethod) {
-
             if ($node->name->name === '__construct') {
-
-                // store constructor like a function
                 $this->functions['__construct'] = [
                     'params' => count($node->params),
                     'line' => $node->getStartLine()
@@ -120,36 +150,29 @@ class AnalyzerVisitor extends NodeVisitorAbstract
             }
         }
 
-        // ======================================================
-        // FUNCTION CALL TRACKING (NEW)
-        // ======================================================
+        // =========================
+        // FUNCTION CALLS
+        // =========================
         if ($node instanceof Node\Expr\FuncCall) {
-
             if ($node->name instanceof Node\Name) {
-
                 $name = (string) $node->name;
-
                 $this->functionCalls[$name] = count($node->args);
             }
         }
 
-        // ======================================================
-        // NEW CLASS INSTANTIATION TRACKING (NEW)
-        // ======================================================
+        // =========================
+        // NEW CLASS CALL
+        // =========================
         if ($node instanceof Node\Expr\New_) {
-
             if ($node->class instanceof Node\Name) {
-
                 $className = (string) $node->class;
-
-                // treat constructor as function call
                 $this->functionCalls[$className] = count($node->args);
             }
         }
 
-        // ======================================================
-        // EMPTY BLOCKS (UNCHANGED LOGIC)
-        // ======================================================
+        // =========================
+        // EMPTY BLOCKS
+        // =========================
         if ($node instanceof Node\Stmt\If_) {
             if (empty($node->stmts)) {
                 $this->emptyBlocks[] = [
@@ -193,7 +216,7 @@ $traverser->addVisitor($visitor);
 $traverser->traverse($ast);
 
 // ======================================================
-// UNUSED VARIABLES (UNCHANGED)
+// UNUSED VARIABLES
 // ======================================================
 
 foreach ($visitor->declared as $name => $meta) {
@@ -201,21 +224,19 @@ foreach ($visitor->declared as $name => $meta) {
     $count = count(array_keys($visitor->used, $name));
 
     if ($count <= 1) {
-
         $diagnostics[] = [
             'line' => $meta['line'],
-            'start' => $meta['start'],
-            'end' => $meta['end'],
+            'start' => $meta['start'] ?? 0,
+            'end' => $meta['end'] ?? 0,
             'message' => "Unused variable \$$name",
             'severity' => 'warning',
-            'code' => 'unused-variable',
-            'unnecessary' => true
+            'code' => 'unused-variable'
         ];
     }
 }
 
 // ======================================================
-// FUNCTION + CONSTRUCTOR ARG CHECK (SAFE ADD)
+// FUNCTION ARG CHECK
 // ======================================================
 
 foreach ($visitor->functions as $name => $meta) {
@@ -224,16 +245,12 @@ foreach ($visitor->functions as $name => $meta) {
         continue;
     }
 
-    $expected = $meta['params'];
-    $given = $visitor->functionCalls[$name];
-
-    if ($given < $expected) {
-
+    if ($visitor->functionCalls[$name] < $meta['params']) {
         $diagnostics[] = [
             'line' => $meta['line'],
             'start' => 0,
             'end' => 80,
-            'message' => "Function '$name' expects $expected argument(s), got $given",
+            'message' => "Function '$name' expects {$meta['params']} argument(s)",
             'severity' => 'warning',
             'code' => 'missing-arguments'
         ];
@@ -241,15 +258,22 @@ foreach ($visitor->functions as $name => $meta) {
 }
 
 // ======================================================
-// UNDEFINED VARIABLES (UNCHANGED)
+// UNDEFINED VARIABLES
 // ======================================================
 
 $usedVars = array_unique($visitor->used);
 
 foreach ($usedVars as $used) {
 
-    if (!isset($visitor->declared[$used])) {
+    if ($used === 'this') {
+        continue;
+    }
 
+    if (str_starts_with($used, '__prop:')) {
+        continue;
+    }
+
+    if (!isset($visitor->declared[$used])) {
         $diagnostics[] = [
             'line' => 1,
             'start' => 0,
@@ -262,11 +286,10 @@ foreach ($usedVars as $used) {
 }
 
 // ======================================================
-// EMPTY BLOCKS (UNCHANGED)
+// EMPTY BLOCKS OUTPUT
 // ======================================================
 
 foreach ($visitor->emptyBlocks as $block) {
-
     $diagnostics[] = [
         'line' => $block['line'],
         'start' => 0,
@@ -286,7 +309,7 @@ foreach ($diagnostics as $diagnostic) {
 }
 
 // ======================================================
-// SEMICOLON CHECK (UNCHANGED)
+// SEMICOLON CHECK
 // ======================================================
 
 function checkMissingSemicolon(array $lines): array
@@ -329,7 +352,6 @@ function checkMissingSemicolon(array $lines): array
         $isAssign = preg_match('/^\$[a-zA-Z_]/', $trimmed);
 
         if ($isCall || $isAssign) {
-
             $diagnostics[] = [
                 'line' => $index + 1,
                 'start' => 0,
